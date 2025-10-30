@@ -56,9 +56,7 @@ async def init_database():
           MONGODB_URL,
           tls=True,
           tlsAllowInvalidCertificates=True,  # For development only
-          serverSelectionTimeoutMS=5000,
-          connectTimeoutMS=20000,
-          socketTimeoutMS=20000)
+          )
         # Test connection
         await client.admin.command("ping")
         database = client.smart_gwiza
