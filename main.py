@@ -53,7 +53,6 @@ async def init_database():
         MONGODB_URL = os.getenv("MONGODB_URL", "mongodb://localhost:27017")
         client = AsyncIOMotorClient(
           MONGODB_URL,
-          MONGODB_URL,
           tls=True,
           tlsAllowInvalidCertificates=True,  # For development only
           )
