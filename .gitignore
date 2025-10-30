@@ -1,0 +1,123 @@
+# ========================
+# Python general ignores
+# ========================
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.pdb
+*.pkl
+*.so
+*.log
+*.sqlite3
+*.db
+
+# ========================
+# Virtual environments
+# ========================
+env/
+venv/
+ENV/
+.venv/
+.idea/
+.vscode/
+
+# ========================
+# Environment variables
+# ========================
+.env
+.env.*
+*.env
+
+# ========================
+# Byte-compiled / optimized / DLL files
+# ========================
+*.pyc
+__pycache__/
+
+# ========================
+# MacOS / System files
+# ========================
+.DS_Store
+Thumbs.db
+
+# ========================
+# FastAPI / Uvicorn / Logs
+# ========================
+*.log
+*.pid
+
+# ========================
+# Local development files
+# ========================
+*.sqlite
+*.db
+*.bak
+*.swp
+*.swo
+*.tmp
+
+# ========================
+# Uploaded files
+# ========================
+uploads/
+media/
+staticfiles/
+tmp/
+
+# ========================
+# Testing / Coverage
+# ========================
+htmlcov/
+.tox/
+.nox/
+.coverage
+coverage.xml
+*.cover
+.pytest_cache/
+test-results/
+
+# ========================
+# Jupyter / Colab
+# ========================
+.ipynb_checkpoints/
+*.ipynb
+
+# ========================
+# Build / Packaging
+# ========================
+build/
+dist/
+*.egg-info/
+.eggs/
+
+# ========================
+# Cache and dependencies
+# ========================
+.cache/
+pip-wheel-metadata/
+__pypackages__/
+
+# ========================
+# IDE files
+# ========================
+.vscode/
+.idea/
+*.sublime-project
+*.sublime-workspace
+
+# ========================
+# OS-specific files
+# ========================
+.DS_Store
+ehthumbs.db
+Icon?
+Desktop.ini
+
+# ========================
+# Secrets / Keys
+# ========================
+*.pem
+*.key
+*.crt
+secrets.json
