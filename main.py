@@ -8,8 +8,8 @@ from pydantic import BaseModel, field_validator, Field
 from jose import JWTError, jwt
 from passlib.context import CryptContext
 import os
-from motor.motor_asyncio import AsyncIOMotorClient
-from bson import ObjectId
+from pymongo.mongo_client import MongoClient
+from pymongo.server_api import ServerApi
 import joblib
 import pandas as pd
 import numpy as np
@@ -38,7 +38,7 @@ GOOGLE_DRIVE_URL = (
 
 # Global variables
 client = None
-database = None
+db = None
 users_collection = None
 submissions_collection = None
 predictions_collection = None
@@ -50,24 +50,42 @@ feature_names = []
 
 async def init_database():
     """Initialize database connection"""
-    global client, database, users_collection, submissions_collection, predictions_collection
+    global client, db, users_collection, submissions_collection, predictions_collection
     try:
         MONGODB_URL = os.getenv("MONGODB_URL", "mongodb://localhost:27017")
-        client = AsyncIOMotorClient(
+        # Create a new client and connect to the server with proper settings
+        client = MongoClient(
             MONGODB_URL,
+            server_api=ServerApi("1"),
             tls=True,
-            tlsAllowInvalidCertificates=True,  # For development only
+            tlsAllowInvalidCertificates=True,
+            connectTimeoutMS=30000,
+            socketTimeoutMS=30000,
+            serverSelectionTimeoutMS=30000,
+            maxPoolSize=50,
+            retryWrites=True,
+            w="majority",
         )
-        # Test connection
-        await client.admin.command("ping")
-        database = client.smart_gwiza
-        users_collection = database.users
-        submissions_collection = database.submissions
-        predictions_collection = database.predictions
+
+        # Test connection with timeout
+        client.admin.command("ping", serverSelectionTimeoutMS=5000)
+
+        db = client.smart_gwiza
+        users_collection = db.users
+        submissions_collection = db.submissions
+        predictions_collection = db.predictions
+
         print("✅ Database connected successfully")
         return True
     except Exception as e:
-        print(f"❌ Database connection failed: {e}")
+        print(f"❌ Database connection failed: {str(e)}")
+        if client:
+            client.close()
+        client = None
+        db = None
+        users_collection = None
+        submissions_collection = None
+        predictions_collection = None
         return False
 
 
@@ -208,14 +226,14 @@ security = HTTPBearer()
 
 async def get_db_collections():
     """Get database collections with safety check"""
-    if database is None:
+    if db is None:
         raise HTTPException(status_code=503, detail="Database unavailable")
     return users_collection, submissions_collection, predictions_collection
 
 
 async def verify_db_connection():
     """Verify database is available"""
-    if database is None:
+    if db is None:
         raise HTTPException(status_code=503, detail="Database service unavailable")
 
 
@@ -431,7 +449,7 @@ async def get_current_user(
     await verify_db_connection()
     users_coll, _, _ = await get_db_collections()
 
-    user = await users_coll.find_one({"phone_number": phone_number})
+    user = users_coll.find_one({"phone_number": phone_number})
     if user is None:
         raise credentials_exception
 
@@ -520,7 +538,7 @@ async def root():
         "version": "2.0.0",
         "status": "running",
         "model_loaded": model is not None,
-        "database_connected": database is not None,
+        "database_connected": db is not None,
         "model_source": "Google Drive",
     }
 
@@ -528,9 +546,9 @@ async def root():
 @app.get("/health")
 async def health_check():
     db_status = "disconnected"
-    if database is not None:
+    if db is not None:
         try:
-            await database.client.admin.command("ping")
+            db.client.admin.command("ping")
             db_status = "connected"
         except Exception:
             db_status = "disconnected"
@@ -552,7 +570,7 @@ async def signup(user_data: UserSignup):
 
     normalized_phone = validate_rwandan_phone(user_data.phone_number)
 
-    existing_user = await users_coll.find_one({"phone_number": normalized_phone})
+    existing_user = users_coll.find_one({"phone_number": normalized_phone})
     if existing_user:
         raise HTTPException(status_code=400, detail="Phone number already registered")
 
@@ -567,7 +585,7 @@ async def signup(user_data: UserSignup):
         "last_login": datetime.utcnow(),
     }
 
-    result = await users_coll.insert_one(user_doc)
+    result = users_coll.insert_one(user_doc)
 
     access_token_expires = timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
     access_token = create_access_token(
@@ -590,11 +608,11 @@ async def login(user_data: UserLogin):
 
     normalized_phone = validate_rwandan_phone(user_data.phone_number)
 
-    user = await users_coll.find_one({"phone_number": normalized_phone})
+    user = users_coll.find_one({"phone_number": normalized_phone})
     if not user or not verify_password(user_data.password, user["password_hash"]):
         raise HTTPException(status_code=401, detail="Invalid phone number or password")
 
-    await users_coll.update_one(
+    users_coll.update_one(
         {"phone_number": normalized_phone}, {"$set": {"last_login": datetime.utcnow()}}
     )
 
@@ -635,7 +653,7 @@ async def make_prediction(
             "timestamp": datetime.utcnow(),
         }
 
-        await predictions_coll.insert_one(prediction_record)
+        predictions_coll.insert_one(prediction_record)
 
         return PredictionResponse(
             predicted_yield=round(predicted_yield, 2),
@@ -662,14 +680,14 @@ async def get_prediction_history(
         .limit(limit)
     )
 
-    predictions = await cursor.to_list(length=limit)
+    predictions = list(cursor)
 
     for prediction in predictions:
         prediction["_id"] = str(prediction["_id"])
 
     return {
         "predictions": predictions,
-        "total": await predictions_coll.count_documents(
+        "total": predictions_coll.count_documents(
             {"user_phone": current_user["phone_number"]}
         ),
     }
@@ -702,9 +720,9 @@ async def submit_data(
             "status": "submitted",
         }
 
-        result = await submissions_coll.insert_one(submission)
+        result = submissions_coll.insert_one(submission)
 
-        await users_coll.update_one(
+        users_coll.update_one(
             {"phone_number": current_user["phone_number"]}, {"$inc": {"points": 5}}
         )
 
@@ -734,7 +752,7 @@ async def get_user_submissions(
         .limit(limit)
     )
 
-    submissions = await cursor.to_list(length=limit)
+    submissions = list(cursor)
 
     for submission in submissions:
         submission["_id"] = str(submission["_id"])
@@ -753,452 +771,6 @@ async def get_user_profile(current_user: dict = Depends(get_current_user)):
         "points": current_user.get("points", 0),
         "created_at": current_user["created_at"],
         "last_login": current_user.get("last_login"),
-    }
-
-
-# ===== ADMIN ROUTES =====
-
-
-# Admin Dashboard Statistics
-@app.get("/api/admin/dashboard/stats", response_model=AdminStatsResponse)
-async def get_admin_dashboard_stats(current_user: dict = Depends(require_admin)):
-    """Get admin dashboard statistics"""
-    # Get total farmers count
-    total_farmers = await users_collection.count_documents({"role": "farmer"})
-
-    # Get active farmers (those who logged in last 30 days)
-    thirty_days_ago = datetime.utcnow() - timedelta(days=30)
-    active_farmers = await users_collection.count_documents(
-        {"role": "farmer", "last_login": {"$gte": thirty_days_ago}}
-    )
-
-    # Get total predictions
-    total_predictions = await predictions_collection.count_documents({})
-
-    # Get total data submissions
-    total_submissions = await submissions_collection.count_documents({})
-
-    # Get average yield from predictions
-    pipeline = [{"$group": {"_id": None, "avg_yield": {"$avg": "$predicted_yield"}}}]
-    avg_yield_result = await predictions_collection.aggregate(pipeline).to_list(1)
-    avg_yield = avg_yield_result[0]["avg_yield"] if avg_yield_result else 0
-
-    # Calculate active rate
-    active_rate = round(
-        (active_farmers / total_farmers * 100) if total_farmers > 0 else 0, 1
-    )
-
-    return AdminStatsResponse(
-        total_farmers=total_farmers,
-        active_farmers=active_farmers,
-        total_predictions=total_predictions,
-        average_yield=round(avg_yield, 2),
-        active_rate=active_rate,
-        total_submissions=total_submissions,
-    )
-
-
-# Farmer Management
-@app.get("/api/admin/farmers", response_model=FarmerListResponse)
-async def get_all_farmers(
-    current_user: dict = Depends(require_admin),
-    page: int = 1,
-    limit: int = 20,
-    search: str = None,
-    status: str = "all",
-):
-    """Get all farmers with pagination and filtering"""
-    skip = (page - 1) * limit
-    query = {"role": "farmer"}
-
-    # Add search filter
-    if search:
-        query["$or"] = [
-            {"fullname": {"$regex": search, "$options": "i"}},
-            {"phone_number": {"$regex": search, "$options": "i"}},
-            {"district": {"$regex": search, "$options": "i"}},
-        ]
-
-    # Add status filter
-    if status == "active":
-        thirty_days_ago = datetime.utcnow() - timedelta(days=30)
-        query["last_login"] = {"$gte": thirty_days_ago}
-    elif status == "inactive":
-        thirty_days_ago = datetime.utcnow() - timedelta(days=30)
-        query["last_login"] = {"$lt": thirty_days_ago}
-
-    farmers_cursor = users_collection.find(query).skip(skip).limit(limit)
-    total = await users_collection.count_documents(query)
-
-    farmers = []
-    async for farmer in farmers_cursor:
-        # Get farmer's last prediction
-        last_prediction = await predictions_collection.find_one(
-            {"user_phone": farmer["phone_number"]}, sort=[("timestamp", -1)]
-        )
-
-        # Determine status based on last login
-        is_active = (
-            farmer.get("last_login")
-            and (datetime.utcnow() - farmer["last_login"]).days <= 30
-        )
-
-        farmers.append(
-            {
-                "id": str(farmer["_id"]),
-                "name": farmer["fullname"],
-                "phone": farmer["phone_number"],
-                "location": farmer.get("district", "Rwanda"),
-                "last_prediction": (
-                    last_prediction["timestamp"].strftime("%Y-%m-%d")
-                    if last_prediction
-                    else "No predictions"
-                ),
-                "yield": (
-                    f"{last_prediction['predicted_yield']:.3f} tons/ha"
-                    if last_prediction
-                    else "No predictions"
-                ),
-                "status": "Active" if is_active else "Inactive",
-                "points": farmer.get("points", 0),
-                "joined_date": farmer["created_at"].strftime("%Y-%m-%d"),
-            }
-        )
-
-    return FarmerListResponse(
-        farmers=farmers,
-        total=total,
-        page=page,
-        total_pages=(total + limit - 1) // limit,
-    )
-
-
-# Yield Trends Analytics
-@app.get("/api/admin/analytics/yield-trends", response_model=YieldTrendResponse)
-async def get_yield_trends(
-    current_user: dict = Depends(require_admin),
-    period: str = "6months",  # 1month, 3months, 6months, 1year
-):
-    """Get yield trends over time for analytics"""
-    # Calculate date range based on period
-    if period == "1month":
-        days = 30
-    elif period == "3months":
-        days = 90
-    elif period == "1year":
-        days = 365
-    else:  # 6months default
-        days = 180
-
-    start_date = datetime.utcnow() - timedelta(days=days)
-
-    pipeline = [
-        {"$match": {"timestamp": {"$gte": start_date}}},
-        {
-            "$group": {
-                "_id": {"$dateToString": {"format": "%Y-%m", "date": "$timestamp"}},
-                "average_yield": {"$avg": "$predicted_yield"},
-                "prediction_count": {"$sum": 1},
-            }
-        },
-        {"$sort": {"_id": 1}},
-    ]
-
-    trends = await predictions_collection.aggregate(pipeline).to_list(None)
-
-    # Format the response
-    for trend in trends:
-        trend["average_yield"] = round(trend["average_yield"], 2)
-        trend["month"] = trend["_id"]
-
-    return YieldTrendResponse(trends=trends)
-
-
-# Before/After Comparison
-@app.get("/api/admin/analytics/before-after-comparison")
-async def get_before_after_comparison(current_user: dict = Depends(require_admin)):
-    """Get before/after yield comparison data"""
-    # This is mock data - in a real system, you'd compare historical vs current yields
-    comparison_data = [
-        {"name": "Jean Baptiste", "before": 2.8, "after": 4.2},
-        {"name": "Marie Claire", "before": 2.5, "after": 3.8},
-        {"name": "Patrick", "before": 3.2, "after": 5.1},
-        {"name": "Grace", "before": 3.0, "after": 4.5},
-        {"name": "Emmanuel", "before": 2.6, "after": 3.9},
-    ]
-
-    return {"comparison": comparison_data}
-
-
-# Regional Statistics
-@app.get("/api/admin/analytics/regional-stats", response_model=RegionalStatsResponse)
-async def get_regional_stats(current_user: dict = Depends(require_admin)):
-    """Get statistics by region/district"""
-    pipeline = [
-        {
-            "$group": {
-                "_id": "$inputs.district",
-                "average_yield": {"$avg": "$predicted_yield"},
-                "prediction_count": {"$sum": 1},
-                "farmers_count": {"$addToSet": "$user_phone"},
-            }
-        },
-        {
-            "$project": {
-                "district": "$_id",
-                "average_yield": {"$round": ["$average_yield", 2]},
-                "prediction_count": 1,
-                "farmers_count": {"$size": "$farmers_count"},
-            }
-        },
-        {"$sort": {"average_yield": -1}},
-    ]
-
-    regional_stats = await predictions_collection.aggregate(pipeline).to_list(None)
-
-    return RegionalStatsResponse(regional_stats=regional_stats)
-
-
-# Data Export
-@app.get("/api/admin/export/farmers-data")
-async def export_farmers_data(
-    current_user: dict = Depends(require_admin), format: str = "csv"
-):
-    """Export farmers data in CSV format"""
-    farmers = await users_collection.find({"role": "farmer"}).to_list(None)
-
-    if format == "csv":
-        csv_data = "Farmer Name,Phone Number,District,Status,Last Prediction,Points,Joined Date\n"
-
-        for farmer in farmers:
-            last_prediction = await predictions_collection.find_one(
-                {"user_phone": farmer["phone_number"]}, sort=[("timestamp", -1)]
-            )
-
-            is_active = (
-                farmer.get("last_login")
-                and (datetime.utcnow() - farmer["last_login"]).days <= 30
-            )
-
-            csv_data += f'"{farmer["fullname"]}",{farmer["phone_number"]},{farmer.get("district", "Rwanda")},'
-            csv_data += f'{"Active" if is_active else "Inactive"},'
-            csv_data += f'{last_prediction["timestamp"].strftime("%Y-%m-%d") if last_prediction else "No predictions"},'
-            csv_data += f'{farmer.get("points", 0)},{farmer["created_at"].strftime("%Y-%m-%d")}\n'
-
-        return Response(
-            content=csv_data,
-            media_type="text/csv",
-            headers={
-                "Content-Disposition": f"attachment; filename=farmers_data_{datetime.utcnow().date()}.csv"
-            },
-        )
-
-
-# System Health
-@app.get("/api/admin/system/health", response_model=SystemHealthResponse)
-async def get_system_health(current_user: dict = Depends(require_admin)):
-    """Get system health and metrics"""
-    # Database health
-    db_status = "healthy"
-    try:
-        await database.command("ping")
-    except Exception:
-        db_status = "unhealthy"
-
-    # Model health
-    model_status = "loaded" if model is not None else "not loaded"
-
-    # System metrics
-    total_users = await users_collection.count_documents({})
-    total_predictions = await predictions_collection.count_documents({})
-    total_submissions = await submissions_collection.count_documents({})
-
-    # Recent activity (last 24 hours)
-    twenty_four_hours_ago = datetime.utcnow() - timedelta(hours=24)
-    recent_predictions = await predictions_collection.count_documents(
-        {"timestamp": {"$gte": twenty_four_hours_ago}}
-    )
-    recent_signups = await users_collection.count_documents(
-        {"created_at": {"$gte": twenty_four_hours_ago}}
-    )
-
-    return SystemHealthResponse(
-        database=db_status,
-        model=model_status,
-        metrics={
-            "total_users": total_users,
-            "total_predictions": total_predictions,
-            "total_submissions": total_submissions,
-            "recent_predictions_24h": recent_predictions,
-            "recent_signups_24h": recent_signups,
-        },
-        timestamp=datetime.utcnow(),
-    )
-
-
-# Farmer Details
-@app.get("/api/admin/farmers/{farmer_id}/details")
-async def get_farmer_details(
-    farmer_id: str, current_user: dict = Depends(require_admin)
-):
-    """Get detailed information about a specific farmer"""
-    try:
-        farmer = await users_collection.find_one({"_id": ObjectId(farmer_id)})
-        if not farmer:
-            raise HTTPException(status_code=404, detail="Farmer not found")
-
-        # Get farmer's predictions
-        predictions = (
-            await predictions_collection.find({"user_phone": farmer["phone_number"]})
-            .sort("timestamp", -1)
-            .limit(10)
-            .to_list(None)
-        )
-
-        # Get farmer's submissions
-        submissions = (
-            await submissions_collection.find({"user_phone": farmer["phone_number"]})
-            .sort("submission_date", -1)
-            .limit(5)
-            .to_list(None)
-        )
-
-        # Format predictions and submissions
-        for pred in predictions:
-            pred["_id"] = str(pred["_id"])
-            pred["timestamp"] = pred["timestamp"].isoformat()
-
-        for sub in submissions:
-            sub["_id"] = str(sub["_id"])
-            sub["submission_date"] = sub["submission_date"].isoformat()
-
-        return {
-            "farmer_info": {
-                "name": farmer["fullname"],
-                "phone": farmer["phone_number"],
-                "district": farmer.get("district", ""),
-                "joined_date": farmer["created_at"].isoformat(),
-                "last_login": farmer.get(
-                    "last_login", farmer["created_at"]
-                ).isoformat(),
-                "points": farmer.get("points", 0),
-                "status": (
-                    "Active"
-                    if farmer.get("last_login")
-                    and (datetime.utcnow() - farmer["last_login"]).days <= 30
-                    else "Inactive"
-                ),
-            },
-            "predictions": predictions,
-            "submissions": submissions,
-            "prediction_count": await predictions_collection.count_documents(
-                {"user_phone": farmer["phone_number"]}
-            ),
-            "submission_count": await submissions_collection.count_documents(
-                {"user_phone": farmer["phone_number"]}
-            ),
-        }
-
-    except Exception as e:
-        raise HTTPException(status_code=400, detail=f"Invalid farmer ID: {str(e)}")
-
-
-# Update Farmer Status
-@app.put("/api/admin/farmers/{farmer_id}/status")
-async def update_farmer_status(
-    farmer_id: str,
-    status: str = Body(..., embed=True),
-    current_user: dict = Depends(require_admin),
-):
-    """Update farmer status (for future implementation)"""
-    try:
-        # This would update a status field in the user document
-        # For now, we'll just return success
-        return {
-            "message": f"Farmer status would be updated to {status}",
-            "success": True,
-        }
-    except Exception as e:
-        raise HTTPException(status_code=400, detail=f"Error updating status: {str(e)}")
-
-
-# Model management routes
-@app.post("/api/admin/model/reload")
-async def reload_model(current_user: dict = Depends(require_admin)):
-    """Reload model from Google Drive (admin only)"""
-    global model_artifacts, model, scaler, feature_names
-
-    try:
-        model_artifacts = load_model_from_google_drive()
-        if model_artifacts:
-            model = model_artifacts.get("model")
-            scaler = model_artifacts.get("scaler")
-            feature_names = model_artifacts.get("feature_names", [])
-            return {
-                "message": "Model reloaded successfully",
-                "features": len(feature_names),
-                "timestamp": datetime.utcnow().isoformat(),
-            }
-        else:
-            raise HTTPException(status_code=500, detail="Failed to reload model")
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Error reloading model: {str(e)}")
-
-
-# Get all predictions for admin
-@app.get("/api/admin/predictions")
-async def get_all_predictions(
-    current_user: dict = Depends(require_admin), page: int = 1, limit: int = 20
-):
-    """Get all predictions across all users (admin only)"""
-    skip = (page - 1) * limit
-
-    cursor = (
-        predictions_collection.find({}).sort("timestamp", -1).skip(skip).limit(limit)
-    )
-    total = await predictions_collection.count_documents({})
-
-    predictions = await cursor.to_list(length=limit)
-
-    for prediction in predictions:
-        prediction["_id"] = str(prediction["_id"])
-        prediction["timestamp"] = prediction["timestamp"].isoformat()
-
-    return {
-        "predictions": predictions,
-        "total": total,
-        "page": page,
-        "total_pages": (total + limit - 1) // limit,
-    }
-
-
-# Get all submissions for admin
-@app.get("/api/admin/submissions")
-async def get_all_submissions(
-    current_user: dict = Depends(require_admin), page: int = 1, limit: int = 20
-):
-    """Get all data submissions across all users (admin only)"""
-    skip = (page - 1) * limit
-
-    cursor = (
-        submissions_collection.find({})
-        .sort("submission_date", -1)
-        .skip(skip)
-        .limit(limit)
-    )
-    total = await submissions_collection.count_documents({})
-
-    submissions = await cursor.to_list(length=limit)
-
-    for submission in submissions:
-        submission["_id"] = str(submission["_id"])
-        submission["submission_date"] = submission["submission_date"].isoformat()
-
-    return {
-        "submissions": submissions,
-        "total": total,
-        "page": page,
-        "total_pages": (total + limit - 1) // limit,
     }
 
 
