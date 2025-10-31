@@ -1,14 +1,15 @@
 # main.py
-from fastapi import FastAPI, Depends, HTTPException, status
+from fastapi import FastAPI, Depends, HTTPException, status, Body, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from datetime import datetime, timedelta
-from typing import Optional, List
+from typing import Optional, List, Dict, Any
 from pydantic import BaseModel, field_validator, Field
 from jose import JWTError, jwt
 from passlib.context import CryptContext
 import os
 from motor.motor_asyncio import AsyncIOMotorClient
+from bson import ObjectId
 import joblib
 import pandas as pd
 import numpy as np
@@ -20,6 +21,7 @@ import re
 import uuid
 import hashlib
 from contextlib import asynccontextmanager
+import json
 
 load_dotenv()
 
@@ -52,10 +54,10 @@ async def init_database():
     try:
         MONGODB_URL = os.getenv("MONGODB_URL", "mongodb://localhost:27017")
         client = AsyncIOMotorClient(
-          MONGODB_URL,
-          tls=True,
-          tlsAllowInvalidCertificates=True,  # For development only
-          )
+            MONGODB_URL,
+            tls=True,
+            tlsAllowInvalidCertificates=True,  # For development only
+        )
         # Test connection
         await client.admin.command("ping")
         database = client.smart_gwiza
@@ -65,14 +67,14 @@ async def init_database():
         print("✅ Database connected successfully")
         return True
     except Exception as e:
-        print(f" Database connection failed: {e}")
+        print(f"❌ Database connection failed: {e}")
         return False
 
 
 def load_model_from_google_drive():
     """Load model directly from Google Drive"""
     try:
-        print(" Loading model from Google Drive...")
+        print("📥 Loading model from Google Drive...")
 
         # Create a session to handle cookies
         session = requests.Session()
@@ -102,18 +104,18 @@ def load_model_from_google_drive():
         model_content = io.BytesIO(response.content)
         model_artifacts = joblib.load(model_content)
 
-        print(" ML Model loaded successfully from Google Drive!")
+        print("✅ ML Model loaded successfully from Google Drive!")
         return model_artifacts
 
     except Exception as e:
-        print(f" Error loading model from Google Drive: {e}")
+        print(f"❌ Error loading model from Google Drive: {e}")
         return None
 
 
 def load_model_from_google_drive_with_tempfile():
     """Load model by downloading to temporary file"""
     try:
-        print(" Downloading model from Google Drive to temporary file...")
+        print("📥 Downloading model from Google Drive to temporary file...")
 
         session = requests.Session()
         response = session.get(GOOGLE_DRIVE_URL, stream=True)
@@ -142,11 +144,11 @@ def load_model_from_google_drive_with_tempfile():
         # Clean up temporary file
         os.unlink(temp_path)
 
-        print(" ML Model loaded successfully via temporary file!")
+        print("✅ ML Model loaded successfully via temporary file!")
         return model_artifacts
 
     except Exception as e:
-        print(f" Error loading model: {e}")
+        print(f"❌ Error loading model: {e}")
         return None
 
 
@@ -160,21 +162,21 @@ async def lifespan(app: FastAPI):
     # Initialize database connection
     db_success = await init_database()
     if not db_success:
-        print("  Starting without database connection")
+        print("⚠️ Starting without database connection")
 
     # Try to load model
     model_artifacts = load_model_from_google_drive()
     if not model_artifacts:
-        print(" Trying alternative loading method...")
+        print("🔄 Trying alternative loading method...")
         model_artifacts = load_model_from_google_drive_with_tempfile()
 
     if model_artifacts:
         model = model_artifacts.get("model")
         scaler = model_artifacts.get("scaler")
         feature_names = model_artifacts.get("feature_names", [])
-        print(f" Model loaded successfully! Features: {len(feature_names)}")
+        print(f"✅ Model loaded successfully! Features: {len(feature_names)}")
     else:
-        print(" Could not load ML model - predictions will not be available")
+        print("❌ Could not load ML model - predictions will not be available")
 
     yield
     # Shutdown
@@ -223,6 +225,7 @@ class UserSignup(BaseModel):
     phone_number: str
     password: str = Field(..., min_length=8, max_length=50)
     role: str = "farmer"
+    district: Optional[str] = None
 
     @field_validator("role")
     @classmethod
@@ -234,7 +237,6 @@ class UserSignup(BaseModel):
     @field_validator("password")
     @classmethod
     def validate_password_length(cls, v):
-        # Check if password exceeds bcrypt's 72-byte limit when encoded
         if len(v.encode("utf-8")) > 72:
             raise ValueError(
                 "Password is too long. Please use a shorter password (max ~50 characters)."
@@ -305,6 +307,44 @@ class SubmissionResponse(BaseModel):
     message: str
     submission_id: str
     points_earned: int = 0
+
+
+# Admin Models
+class AdminStatsResponse(BaseModel):
+    total_farmers: int
+    active_farmers: int
+    total_predictions: int
+    average_yield: float
+    active_rate: float
+    total_submissions: int
+
+
+class FarmerListResponse(BaseModel):
+    farmers: List[dict]
+    total: int
+    page: int
+    total_pages: int
+
+
+class YieldTrendResponse(BaseModel):
+    trends: List[dict]
+
+
+class SystemHealthResponse(BaseModel):
+    database: str
+    model: str
+    metrics: dict
+    timestamp: datetime
+
+
+class BeforeAfterComparison(BaseModel):
+    name: str
+    before: float
+    after: float
+
+
+class RegionalStatsResponse(BaseModel):
+    regional_stats: List[dict]
 
 
 # ===== AUTH UTILITIES =====
@@ -396,6 +436,13 @@ async def get_current_user(
         raise credentials_exception
 
     return user
+
+
+async def require_admin(current_user: dict = Depends(get_current_user)):
+    """Dependency to require admin role"""
+    if current_user["role"] != "admin":
+        raise HTTPException(status_code=403, detail="Admin access required")
+    return current_user
 
 
 # ===== PREDICTION FUNCTION =====
@@ -514,6 +561,7 @@ async def signup(user_data: UserSignup):
         "phone_number": normalized_phone,
         "password_hash": safe_hash_password(user_data.password),
         "role": user_data.role,
+        "district": user_data.district,
         "points": 0,
         "created_at": datetime.utcnow(),
         "last_login": datetime.utcnow(),
@@ -580,6 +628,7 @@ async def make_prediction(
         prediction_record = {
             "prediction_id": prediction_id,
             "user_phone": current_user["phone_number"],
+            "user_name": current_user["fullname"],
             "inputs": input_data.dict(),
             "predicted_yield": predicted_yield,
             "interpretation": interpretation_data,
@@ -700,19 +749,383 @@ async def get_user_profile(current_user: dict = Depends(get_current_user)):
         "fullname": current_user["fullname"],
         "phone_number": current_user["phone_number"],
         "role": current_user["role"],
+        "district": current_user.get("district", ""),
         "points": current_user.get("points", 0),
         "created_at": current_user["created_at"],
         "last_login": current_user.get("last_login"),
     }
 
 
-# Model management routes
-@app.post("/api/model/reload")
-async def reload_model(current_user: dict = Depends(get_current_user)):
-    """Reload model from Google Drive (admin only)"""
-    if current_user["role"] != "admin":
-        raise HTTPException(status_code=403, detail="Admin access required")
+# ===== ADMIN ROUTES =====
 
+
+# Admin Dashboard Statistics
+@app.get("/api/admin/dashboard/stats", response_model=AdminStatsResponse)
+async def get_admin_dashboard_stats(current_user: dict = Depends(require_admin)):
+    """Get admin dashboard statistics"""
+    # Get total farmers count
+    total_farmers = await users_collection.count_documents({"role": "farmer"})
+
+    # Get active farmers (those who logged in last 30 days)
+    thirty_days_ago = datetime.utcnow() - timedelta(days=30)
+    active_farmers = await users_collection.count_documents(
+        {"role": "farmer", "last_login": {"$gte": thirty_days_ago}}
+    )
+
+    # Get total predictions
+    total_predictions = await predictions_collection.count_documents({})
+
+    # Get total data submissions
+    total_submissions = await submissions_collection.count_documents({})
+
+    # Get average yield from predictions
+    pipeline = [{"$group": {"_id": None, "avg_yield": {"$avg": "$predicted_yield"}}}]
+    avg_yield_result = await predictions_collection.aggregate(pipeline).to_list(1)
+    avg_yield = avg_yield_result[0]["avg_yield"] if avg_yield_result else 0
+
+    # Calculate active rate
+    active_rate = round(
+        (active_farmers / total_farmers * 100) if total_farmers > 0 else 0, 1
+    )
+
+    return AdminStatsResponse(
+        total_farmers=total_farmers,
+        active_farmers=active_farmers,
+        total_predictions=total_predictions,
+        average_yield=round(avg_yield, 2),
+        active_rate=active_rate,
+        total_submissions=total_submissions,
+    )
+
+
+# Farmer Management
+@app.get("/api/admin/farmers", response_model=FarmerListResponse)
+async def get_all_farmers(
+    current_user: dict = Depends(require_admin),
+    page: int = 1,
+    limit: int = 20,
+    search: str = None,
+    status: str = "all",
+):
+    """Get all farmers with pagination and filtering"""
+    skip = (page - 1) * limit
+    query = {"role": "farmer"}
+
+    # Add search filter
+    if search:
+        query["$or"] = [
+            {"fullname": {"$regex": search, "$options": "i"}},
+            {"phone_number": {"$regex": search, "$options": "i"}},
+            {"district": {"$regex": search, "$options": "i"}},
+        ]
+
+    # Add status filter
+    if status == "active":
+        thirty_days_ago = datetime.utcnow() - timedelta(days=30)
+        query["last_login"] = {"$gte": thirty_days_ago}
+    elif status == "inactive":
+        thirty_days_ago = datetime.utcnow() - timedelta(days=30)
+        query["last_login"] = {"$lt": thirty_days_ago}
+
+    farmers_cursor = users_collection.find(query).skip(skip).limit(limit)
+    total = await users_collection.count_documents(query)
+
+    farmers = []
+    async for farmer in farmers_cursor:
+        # Get farmer's last prediction
+        last_prediction = await predictions_collection.find_one(
+            {"user_phone": farmer["phone_number"]}, sort=[("timestamp", -1)]
+        )
+
+        # Determine status based on last login
+        is_active = (
+            farmer.get("last_login")
+            and (datetime.utcnow() - farmer["last_login"]).days <= 30
+        )
+
+        farmers.append(
+            {
+                "id": str(farmer["_id"]),
+                "name": farmer["fullname"],
+                "phone": farmer["phone_number"],
+                "location": farmer.get("district", "Rwanda"),
+                "last_prediction": (
+                    last_prediction["timestamp"].strftime("%Y-%m-%d")
+                    if last_prediction
+                    else "No predictions"
+                ),
+                "yield": (
+                    f"{last_prediction['predicted_yield']:.3f} tons/ha"
+                    if last_prediction
+                    else "No predictions"
+                ),
+                "status": "Active" if is_active else "Inactive",
+                "points": farmer.get("points", 0),
+                "joined_date": farmer["created_at"].strftime("%Y-%m-%d"),
+            }
+        )
+
+    return FarmerListResponse(
+        farmers=farmers,
+        total=total,
+        page=page,
+        total_pages=(total + limit - 1) // limit,
+    )
+
+
+# Yield Trends Analytics
+@app.get("/api/admin/analytics/yield-trends", response_model=YieldTrendResponse)
+async def get_yield_trends(
+    current_user: dict = Depends(require_admin),
+    period: str = "6months",  # 1month, 3months, 6months, 1year
+):
+    """Get yield trends over time for analytics"""
+    # Calculate date range based on period
+    if period == "1month":
+        days = 30
+    elif period == "3months":
+        days = 90
+    elif period == "1year":
+        days = 365
+    else:  # 6months default
+        days = 180
+
+    start_date = datetime.utcnow() - timedelta(days=days)
+
+    pipeline = [
+        {"$match": {"timestamp": {"$gte": start_date}}},
+        {
+            "$group": {
+                "_id": {"$dateToString": {"format": "%Y-%m", "date": "$timestamp"}},
+                "average_yield": {"$avg": "$predicted_yield"},
+                "prediction_count": {"$sum": 1},
+            }
+        },
+        {"$sort": {"_id": 1}},
+    ]
+
+    trends = await predictions_collection.aggregate(pipeline).to_list(None)
+
+    # Format the response
+    for trend in trends:
+        trend["average_yield"] = round(trend["average_yield"], 2)
+        trend["month"] = trend["_id"]
+
+    return YieldTrendResponse(trends=trends)
+
+
+# Before/After Comparison
+@app.get("/api/admin/analytics/before-after-comparison")
+async def get_before_after_comparison(current_user: dict = Depends(require_admin)):
+    """Get before/after yield comparison data"""
+    # This is mock data - in a real system, you'd compare historical vs current yields
+    comparison_data = [
+        {"name": "Jean Baptiste", "before": 2.8, "after": 4.2},
+        {"name": "Marie Claire", "before": 2.5, "after": 3.8},
+        {"name": "Patrick", "before": 3.2, "after": 5.1},
+        {"name": "Grace", "before": 3.0, "after": 4.5},
+        {"name": "Emmanuel", "before": 2.6, "after": 3.9},
+    ]
+
+    return {"comparison": comparison_data}
+
+
+# Regional Statistics
+@app.get("/api/admin/analytics/regional-stats", response_model=RegionalStatsResponse)
+async def get_regional_stats(current_user: dict = Depends(require_admin)):
+    """Get statistics by region/district"""
+    pipeline = [
+        {
+            "$group": {
+                "_id": "$inputs.district",
+                "average_yield": {"$avg": "$predicted_yield"},
+                "prediction_count": {"$sum": 1},
+                "farmers_count": {"$addToSet": "$user_phone"},
+            }
+        },
+        {
+            "$project": {
+                "district": "$_id",
+                "average_yield": {"$round": ["$average_yield", 2]},
+                "prediction_count": 1,
+                "farmers_count": {"$size": "$farmers_count"},
+            }
+        },
+        {"$sort": {"average_yield": -1}},
+    ]
+
+    regional_stats = await predictions_collection.aggregate(pipeline).to_list(None)
+
+    return RegionalStatsResponse(regional_stats=regional_stats)
+
+
+# Data Export
+@app.get("/api/admin/export/farmers-data")
+async def export_farmers_data(
+    current_user: dict = Depends(require_admin), format: str = "csv"
+):
+    """Export farmers data in CSV format"""
+    farmers = await users_collection.find({"role": "farmer"}).to_list(None)
+
+    if format == "csv":
+        csv_data = "Farmer Name,Phone Number,District,Status,Last Prediction,Points,Joined Date\n"
+
+        for farmer in farmers:
+            last_prediction = await predictions_collection.find_one(
+                {"user_phone": farmer["phone_number"]}, sort=[("timestamp", -1)]
+            )
+
+            is_active = (
+                farmer.get("last_login")
+                and (datetime.utcnow() - farmer["last_login"]).days <= 30
+            )
+
+            csv_data += f'"{farmer["fullname"]}",{farmer["phone_number"]},{farmer.get("district", "Rwanda")},'
+            csv_data += f'{"Active" if is_active else "Inactive"},'
+            csv_data += f'{last_prediction["timestamp"].strftime("%Y-%m-%d") if last_prediction else "No predictions"},'
+            csv_data += f'{farmer.get("points", 0)},{farmer["created_at"].strftime("%Y-%m-%d")}\n'
+
+        return Response(
+            content=csv_data,
+            media_type="text/csv",
+            headers={
+                "Content-Disposition": f"attachment; filename=farmers_data_{datetime.utcnow().date()}.csv"
+            },
+        )
+
+
+# System Health
+@app.get("/api/admin/system/health", response_model=SystemHealthResponse)
+async def get_system_health(current_user: dict = Depends(require_admin)):
+    """Get system health and metrics"""
+    # Database health
+    db_status = "healthy"
+    try:
+        await database.command("ping")
+    except Exception:
+        db_status = "unhealthy"
+
+    # Model health
+    model_status = "loaded" if model is not None else "not loaded"
+
+    # System metrics
+    total_users = await users_collection.count_documents({})
+    total_predictions = await predictions_collection.count_documents({})
+    total_submissions = await submissions_collection.count_documents({})
+
+    # Recent activity (last 24 hours)
+    twenty_four_hours_ago = datetime.utcnow() - timedelta(hours=24)
+    recent_predictions = await predictions_collection.count_documents(
+        {"timestamp": {"$gte": twenty_four_hours_ago}}
+    )
+    recent_signups = await users_collection.count_documents(
+        {"created_at": {"$gte": twenty_four_hours_ago}}
+    )
+
+    return SystemHealthResponse(
+        database=db_status,
+        model=model_status,
+        metrics={
+            "total_users": total_users,
+            "total_predictions": total_predictions,
+            "total_submissions": total_submissions,
+            "recent_predictions_24h": recent_predictions,
+            "recent_signups_24h": recent_signups,
+        },
+        timestamp=datetime.utcnow(),
+    )
+
+
+# Farmer Details
+@app.get("/api/admin/farmers/{farmer_id}/details")
+async def get_farmer_details(
+    farmer_id: str, current_user: dict = Depends(require_admin)
+):
+    """Get detailed information about a specific farmer"""
+    try:
+        farmer = await users_collection.find_one({"_id": ObjectId(farmer_id)})
+        if not farmer:
+            raise HTTPException(status_code=404, detail="Farmer not found")
+
+        # Get farmer's predictions
+        predictions = (
+            await predictions_collection.find({"user_phone": farmer["phone_number"]})
+            .sort("timestamp", -1)
+            .limit(10)
+            .to_list(None)
+        )
+
+        # Get farmer's submissions
+        submissions = (
+            await submissions_collection.find({"user_phone": farmer["phone_number"]})
+            .sort("submission_date", -1)
+            .limit(5)
+            .to_list(None)
+        )
+
+        # Format predictions and submissions
+        for pred in predictions:
+            pred["_id"] = str(pred["_id"])
+            pred["timestamp"] = pred["timestamp"].isoformat()
+
+        for sub in submissions:
+            sub["_id"] = str(sub["_id"])
+            sub["submission_date"] = sub["submission_date"].isoformat()
+
+        return {
+            "farmer_info": {
+                "name": farmer["fullname"],
+                "phone": farmer["phone_number"],
+                "district": farmer.get("district", ""),
+                "joined_date": farmer["created_at"].isoformat(),
+                "last_login": farmer.get(
+                    "last_login", farmer["created_at"]
+                ).isoformat(),
+                "points": farmer.get("points", 0),
+                "status": (
+                    "Active"
+                    if farmer.get("last_login")
+                    and (datetime.utcnow() - farmer["last_login"]).days <= 30
+                    else "Inactive"
+                ),
+            },
+            "predictions": predictions,
+            "submissions": submissions,
+            "prediction_count": await predictions_collection.count_documents(
+                {"user_phone": farmer["phone_number"]}
+            ),
+            "submission_count": await submissions_collection.count_documents(
+                {"user_phone": farmer["phone_number"]}
+            ),
+        }
+
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Invalid farmer ID: {str(e)}")
+
+
+# Update Farmer Status
+@app.put("/api/admin/farmers/{farmer_id}/status")
+async def update_farmer_status(
+    farmer_id: str,
+    status: str = Body(..., embed=True),
+    current_user: dict = Depends(require_admin),
+):
+    """Update farmer status (for future implementation)"""
+    try:
+        # This would update a status field in the user document
+        # For now, we'll just return success
+        return {
+            "message": f"Farmer status would be updated to {status}",
+            "success": True,
+        }
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Error updating status: {str(e)}")
+
+
+# Model management routes
+@app.post("/api/admin/model/reload")
+async def reload_model(current_user: dict = Depends(require_admin)):
+    """Reload model from Google Drive (admin only)"""
     global model_artifacts, model, scaler, feature_names
 
     try:
@@ -724,11 +1137,69 @@ async def reload_model(current_user: dict = Depends(get_current_user)):
             return {
                 "message": "Model reloaded successfully",
                 "features": len(feature_names),
+                "timestamp": datetime.utcnow().isoformat(),
             }
         else:
             raise HTTPException(status_code=500, detail="Failed to reload model")
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error reloading model: {str(e)}")
+
+
+# Get all predictions for admin
+@app.get("/api/admin/predictions")
+async def get_all_predictions(
+    current_user: dict = Depends(require_admin), page: int = 1, limit: int = 20
+):
+    """Get all predictions across all users (admin only)"""
+    skip = (page - 1) * limit
+
+    cursor = (
+        predictions_collection.find({}).sort("timestamp", -1).skip(skip).limit(limit)
+    )
+    total = await predictions_collection.count_documents({})
+
+    predictions = await cursor.to_list(length=limit)
+
+    for prediction in predictions:
+        prediction["_id"] = str(prediction["_id"])
+        prediction["timestamp"] = prediction["timestamp"].isoformat()
+
+    return {
+        "predictions": predictions,
+        "total": total,
+        "page": page,
+        "total_pages": (total + limit - 1) // limit,
+    }
+
+
+# Get all submissions for admin
+@app.get("/api/admin/submissions")
+async def get_all_submissions(
+    current_user: dict = Depends(require_admin), page: int = 1, limit: int = 20
+):
+    """Get all data submissions across all users (admin only)"""
+    skip = (page - 1) * limit
+
+    cursor = (
+        submissions_collection.find({})
+        .sort("submission_date", -1)
+        .skip(skip)
+        .limit(limit)
+    )
+    total = await submissions_collection.count_documents({})
+
+    submissions = await cursor.to_list(length=limit)
+
+    for submission in submissions:
+        submission["_id"] = str(submission["_id"])
+        submission["submission_date"] = submission["submission_date"].isoformat()
+
+    return {
+        "submissions": submissions,
+        "total": total,
+        "page": page,
+        "total_pages": (total + limit - 1) // limit,
+    }
 
 
 if __name__ == "__main__":
