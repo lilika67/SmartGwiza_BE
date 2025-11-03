@@ -95,6 +95,7 @@ async def submit_data(
             "fertilizer_kg_per_ha": data.fertilizer_kg_per_ha,
             "pesticide_l_per_ha": data.pesticide_l_per_ha,
             "irrigation_type": data.irrigation_type,
+            "yield_before": data.yield_before,
             "actual_yield_tons_per_ha": data.actual_yield_tons_per_ha,
             "planting_date": data.planting_date,
             "harvest_date": data.harvest_date,

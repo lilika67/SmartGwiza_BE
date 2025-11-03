@@ -82,6 +82,7 @@ class DataSubmission(BaseModel):
     fertilizer_kg_per_ha: float
     pesticide_l_per_ha: float
     irrigation_type: str
+    yield_before:float
     actual_yield_tons_per_ha: float
     planting_date: Optional[str] = None
     harvest_date: Optional[str] = None
