@@ -11,7 +11,7 @@ APP_DESCRIPTION = "AI-powered maize yield prediction for Rwandan farmers"
 # ===== SECURITY CONFIG =====
 SECRET_KEY = os.getenv("SECRET_KEY", "your-secret-key-here-make-it-strong")
 ALGORITHM = "HS256"
-ACCESS_TOKEN_EXPIRE_MINUTES = 30
+ACCESS_TOKEN_EXPIRE_MINUTES = 43200  # 30 days
 
 # ===== DATABASE CONFIG =====
 MONGODB_URL = os.getenv("MONGODB_URL", "mongodb://localhost:27017")
