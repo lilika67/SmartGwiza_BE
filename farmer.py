@@ -83,14 +83,14 @@ class PindoSMSService:
 
         # Create Version 1 message only
         message = f"Muraho neza {user_name}! Mwakoze gukoresha SmartGwiza !\n\n"
-        message += "Ibipimo mwakoresheje mugereranya:\n"
-        message += f"Imvura: {input_data.get('rainfall_mm', 0)}mm "
+        message += "Ibipimo mwakoresheje mugereranya ni ibi:\n"
+        message += f"Imvura: {input_data.get('rainfall_mm', 0)}mm \n"
         message += f"Ubushyuhe: {input_data.get('temperature_c', 0)}°C\n"
-        message += f"pH y'ubutaka: {input_data.get('soil_ph', 0)} "
+        message += f"pH y'ubutaka: {input_data.get('soil_ph', 0)}\n "
         message += f"Ifumbire: {input_data.get('fertilizer_used_kg_per_ha', 0)}kg\n"
-        message += f"Umuti wica ibyonnyi: {input_data.get('pesticide_l_per_ha', 0)}L "
+        message += f"Umuti wica ibyonnyi: {input_data.get('pesticide_l_per_ha', 0)}L\n "
         message += f"ubwoko bwo kuhira: {input_data.get('irrigation_type', 'N/A')}\n"
-        message += f"Umusaruro uteganyijwe {predicted_yield}t/ha - {interpretation}\n"
+        message += f"Umusaruro uteganyijwe {predicted_yield}t/ha \n"
         
 
         return await self.send_sms(user_phone, message)
