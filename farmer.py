@@ -82,15 +82,15 @@ class PindoSMSService:
         prediction_id = prediction_data["prediction_id"]
 
         # Create Version 1 message only
-        message = f"Hi {user_name}! Thank you for using SmartGwiza for your prediction\n"
-        message += "Your prediction Inputs:\n"
-        message += f"Rainfall: {input_data.get('rainfall_mm', 0)}mm "
-        message += f"Temperature: {input_data.get('temperature_c', 0)}°C\n"
-        message += f"pH: {input_data.get('soil_ph', 0)} "
-        message += f"Fertilizer: {input_data.get('fertilizer_used_kg_per_ha', 0)}kg\n"
-        message += f"Pesticide: {input_data.get('pesticide_l_per_ha', 0)}L "
-        message += f"Irrigation type: {input_data.get('irrigation_type', 'N/A')}\n"
-        message += f"Predicted Yield: {predicted_yield}t/ha - {interpretation}\n"
+        message = f"Muraho neza {user_name}! Mwakoze gukoresha SmartGwiza !\n\n"
+        message += "Ibipimo mwakoresheje mugereranya:\n"
+        message += f"Imvura: {input_data.get('rainfall_mm', 0)}mm "
+        message += f"Ubushyuhe: {input_data.get('temperature_c', 0)}°C\n"
+        message += f"pH y'ubutaka: {input_data.get('soil_ph', 0)} "
+        message += f"Ifumbire: {input_data.get('fertilizer_used_kg_per_ha', 0)}kg\n"
+        message += f"Umuti wica ibyonnyi: {input_data.get('pesticide_l_per_ha', 0)}L "
+        message += f"ubwoko bwo kuhira: {input_data.get('irrigation_type', 'N/A')}\n"
+        message += f"Umusaruro uteganyijwe {predicted_yield}t/ha - {interpretation}\n"
         
 
         return await self.send_sms(user_phone, message)
@@ -191,9 +191,9 @@ async def send_prediction_sms_with_retry(
         )
 
         if result.get("success"):
-            print(f"✅ Prediction SMS sent successfully for {prediction_id}")
+            print(f" Prediction SMS sent successfully for {prediction_id}")
             print(
-                f"📱 SMS included: Rainfall={input_data.get('rainfall_mm')}mm, "
+                f"SMS included: Rainfall={input_data.get('rainfall_mm')}mm, "
                 f"Temperature={input_data.get('temperature_c')}°C, "
                 f"pH={input_data.get('soil_ph')}, "
                 f"Fertilizer={input_data.get('fertilizer_used_kg_per_ha')}kg/ha, "
@@ -324,7 +324,7 @@ async def get_user_submissions(
 @router.get("/user/profile")
 async def get_user_profile(current_user: dict = Depends(get_current_user)):
     """
-    Get user profile (NO SMS involved)
+    
     """
     return {
         "fullname": current_user["fullname"],

@@ -126,8 +126,6 @@ class SystemHealthResponse(BaseModel):
 class RegionalStatsResponse(BaseModel):
     regional_stats: List[dict]
 
-
-# Add this to your models.py file
 class SignupResponse(BaseModel):
     success: bool
     message: str
