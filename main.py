@@ -8,13 +8,13 @@ from ml_model import initialize_model
 from config import *
 # Add this import at the top of main.py
 from admin import router as admin_router
-
+from sms_service import sms_service
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # Startup
-    print("🚀 Starting Smart Gwiza API...")
+    print(" Starting Smart Gwiza API...")
 
     db_success = await init_database()
     if not db_success:
@@ -86,6 +86,18 @@ async def health_check():
         "timestamp": datetime.utcnow().isoformat(),
         "model_loaded": model is not None,
         "database": db_status,
+    }
+
+
+@app.get("/health/sms")
+async def sms_health_check():
+    """Check SMS service status"""
+    from config import PINDO_API_TOKEN
+
+    return {
+        "sms_service_configured": PINDO_API_TOKEN is not None,
+        "service": "Pindo SMS",
+        "status": "active" if PINDO_API_TOKEN else "inactive",
     }
 
 
