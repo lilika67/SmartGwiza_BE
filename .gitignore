@@ -79,9 +79,7 @@ test-results/
 
 # ========================
 # Jupyter / Colab
-# ========================
-.ipynb_checkpoints/
-*.ipynb
+# =====================
 
 # ========================
 # Build / Packaging
