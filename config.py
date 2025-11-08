@@ -18,7 +18,8 @@ MONGODB_URL = os.getenv("MONGODB_URL", "mongodb://localhost:27017")
 DATABASE_NAME = "smart_gwiza"
 
 # ===== ML MODEL CONFIG =====
-GOOGLE_DRIVE_FILE_ID = "162HkTkMQgMMa1Spg4l-eNZwry1_iIlcp"
+# Update this to your new model file ID
+GOOGLE_DRIVE_FILE_ID = "1xXiX1zaKxM40TmbMsTZRYKgqs4nKOqrG"  # Updated file ID
 GOOGLE_DRIVE_URL = (
     f"https://drive.google.com/uc?export=download&id={GOOGLE_DRIVE_FILE_ID}"
 )

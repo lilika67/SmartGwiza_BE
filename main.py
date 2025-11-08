@@ -53,6 +53,7 @@ app.include_router(auth_router)
 app.include_router(farmer_router)
 app.include_router(admin_router)
 
+
 @app.get("/")
 async def root():
     from database import db

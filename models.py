@@ -40,7 +40,7 @@ class Token(BaseModel):
     fullname: str
 
 
-# Prediction Models
+# Prediction Models - UPDATED FOR SEASONAL MODEL
 class PredictionInput(BaseModel):
     district: str
     rainfall_mm: float
@@ -53,15 +53,26 @@ class PredictionInput(BaseModel):
     @field_validator("rainfall_mm")
     @classmethod
     def validate_rainfall(cls, v):
-        if v < 500 or v > 2000:
-            raise ValueError("Rainfall should be between 500 and 2000 mm")
+        # UPDATED: Seasonal rainfall range (300-700mm) from your new model
+        if v < 300 or v > 700:
+            raise ValueError(
+                "Rainfall should be between 300 and 700 mm (seasonal range)"
+            )
         return v
 
     @field_validator("temperature_c")
     @classmethod
     def validate_temperature(cls, v):
-        if v < 15 or v > 30:
-            raise ValueError("Temperature should be between 15 and 30°C")
+        # UPDATED: Slightly expanded range for seasonal variations
+        if v < 15 or v > 35:
+            raise ValueError("Temperature should be between 15 and 35°C")
+        return v
+
+    @field_validator("soil_ph")
+    @classmethod
+    def validate_soil_ph(cls, v):
+        if v < 4.0 or v > 8.0:
+            raise ValueError("Soil pH should be between 5.5 and 7.5")
         return v
 
 
@@ -73,7 +84,7 @@ class PredictionResponse(BaseModel):
     timestamp: datetime
 
 
-# Data Submission Models
+# Data Submission Models - UPDATED FOR SEASONAL DATA
 class DataSubmission(BaseModel):
     district: str
     rainfall_mm: float
@@ -82,11 +93,28 @@ class DataSubmission(BaseModel):
     fertilizer_kg_per_ha: float
     pesticide_l_per_ha: float
     irrigation_type: str
-    yield_before:float
+    yield_before: float
     actual_yield_tons_per_ha: float
     planting_date: Optional[str] = None
     harvest_date: Optional[str] = None
     notes: Optional[str] = None
+
+    @field_validator("rainfall_mm")
+    @classmethod
+    def validate_rainfall(cls, v):
+        # UPDATED: Seasonal rainfall range for data submissions too
+        if v < 300 or v > 700:
+            raise ValueError(
+                "Rainfall should be between 300 and 700 mm (seasonal range)"
+            )
+        return v
+
+    @field_validator("temperature_c")
+    @classmethod
+    def validate_temperature(cls, v):
+        if v < 15 or v > 30:
+            raise ValueError("Temperature should be between 15 and 35°C")
+        return v
 
 
 class SubmissionResponse(BaseModel):
@@ -94,6 +122,7 @@ class SubmissionResponse(BaseModel):
     message: str
     submission_id: str
     points_earned: int = 0
+
 
 # Admin Models
 class AdminStatsResponse(BaseModel):
@@ -125,6 +154,7 @@ class SystemHealthResponse(BaseModel):
 
 class RegionalStatsResponse(BaseModel):
     regional_stats: List[dict]
+
 
 class SignupResponse(BaseModel):
     success: bool
