@@ -224,7 +224,7 @@ Predict maize yield based on input parameters.
 **Frontend Repository:**  
  [SmartGwiza Frontend](https://github.com/lilika67/SmartGwiza-system.git)
 
- **Frontend Link ([FrontendLink](https://smartgwizs.vercel.app/))**  
+ **Frontend Link ([FrontendLink]([)](https://smartgwiz-system.vercel.app/))**  
  
  **Backend  Link ([BackendLink](https://smartgwiza-be-1.onrender.com/docs#/))**  
 
