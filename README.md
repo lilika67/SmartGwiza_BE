@@ -115,7 +115,7 @@ Ensure this file is available in your project directory before running the API.
 - **Prediction Tool**  
   Includes a `predict_yield` function with input validation and range checking.
 
-## Installation
+## How to run backend and Dependency Installation
 
 ### 1. Clone the Repository
 ```bash
@@ -156,6 +156,34 @@ SECRET_KEY
 ALGORITHM
 
 ```
+
+## 2. How to run backend and Dependency Installation
+
+## Installation
+
+1. Clone the repository:
+
+```sh
+git clone (https://github.com/lilika67/smartgwiz-system.git)
+cd smartgwiz-system
+```
+
+
+2. Install dependencies:
+
+```sh
+npm install
+```
+
+
+3. Start the development server:
+
+```sh
+npm run dev
+```
+
+
+4. Open [http://localhost:3000](http://localhost:3000) in your browser to see the application.
 
 
 ##  Notebooks usage
