@@ -87,7 +87,8 @@ Farmer-level dataset
 
 For the farmer-level data 
 
-<img width="856" height="706" alt="image" src="https://github.com/user-attachments/assets/2f974073-cb87-4284-b2c0-2132da66e2db" />
+<img width="1074" height="664" alt="image" src="https://github.com/user-attachments/assets/15d78817-b47d-420d-8e0b-53bdf626a467" />
+
 
 Best model saved as rwanda_maize_yield_predictor.pkl
 
